@@ -1,0 +1,69 @@
+name: Deploy to Azure App Service
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:  # Allows manual trigger
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 'Checkout GitHub Action'
+      uses: actions/checkout@v4
+      
+    - name: 'Setup Python'
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'  # Changed from 3.13 for better compatibility
+        
+    - name: 'Install dependencies'
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: 'Download NLTK data'
+      run: |
+        python -c "
+        import nltk
+        import ssl
+        import os
+        
+        # Handle SSL context for NLTK downloads
+        try:
+            _create_unverified_https_context = ssl._create_unverified_context
+        except AttributeError:
+            pass
+        else:
+            ssl._create_default_https_context = _create_unverified_https_context
+        
+        # Create nltk_data directory
+        os.makedirs('nltk_data', exist_ok=True)
+        
+        # Download required NLTK data
+        nltk.download('punkt', download_dir='nltk_data', quiet=True)
+        nltk.download('punkt_tab', download_dir='nltk_data', quiet=True)
+        nltk.download('stopwords', download_dir='nltk_data', quiet=True)
+        nltk.download('averaged_perceptron_tagger', download_dir='nltk_data', quiet=True)
+        
+        print('NLTK data downloaded successfully to nltk_data directory')
+        "
+        
+    - name: 'Verify files before deployment'
+      run: |
+        echo "Files in current directory:"
+        ls -la
+        echo "Checking if required files exist:"
+        [ -f "app.py" ] && echo "✓ app.py exists" || echo "✗ app.py missing"
+        [ -f "requirements.txt" ] && echo "✓ requirements.txt exists" || echo "✗ requirements.txt missing"
+        [ -d "nltk_data" ] && echo "✓ nltk_data directory exists" || echo "✗ nltk_data directory missing"
+        
+    - name: 'Deploy to Azure Web App'
+      uses: azure/webapps-deploy@v3  # Updated to v3
+      with:
+        app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        package: '.' 
