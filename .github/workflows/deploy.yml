@@ -18,15 +18,22 @@ jobs:
     - name: 'Setup Python'
       uses: actions/setup-python@v4
       with:
-        python-version: '3.11'  # Changed from 3.13 for better compatibility
+        python-version: '3.11'
+        
+    - name: 'Create Python virtual environment'
+      run: |
+        python -m venv venv
+        source venv/bin/activate
+        python -m pip install --upgrade pip
         
     - name: 'Install dependencies'
       run: |
-        python -m pip install --upgrade pip
+        source venv/bin/activate
         pip install -r requirements.txt
         
     - name: 'Download NLTK data'
       run: |
+        source venv/bin/activate
         python -c "
         import nltk
         import ssl
@@ -40,30 +47,111 @@ jobs:
         else:
             ssl._create_default_https_context = _create_unverified_https_context
         
-        # Create nltk_data directory
-        os.makedirs('nltk_data', exist_ok=True)
+        # Create nltk_data directory in the app root
+        nltk_data_path = os.path.join(os.getcwd(), 'nltk_data')
+        os.makedirs(nltk_data_path, exist_ok=True)
         
-        # Download required NLTK data
-        nltk.download('punkt', download_dir='nltk_data', quiet=True)
-        nltk.download('punkt_tab', download_dir='nltk_data', quiet=True)
-        nltk.download('stopwords', download_dir='nltk_data', quiet=True)
-        nltk.download('averaged_perceptron_tagger', download_dir='nltk_data', quiet=True)
+        # Set NLTK data path
+        nltk.data.path.append(nltk_data_path)
         
-        print('NLTK data downloaded successfully to nltk_data directory')
+        # Download required NLTK data to specific directory
+        try:
+            nltk.download('punkt', download_dir=nltk_data_path, quiet=False)
+            nltk.download('punkt_tab', download_dir=nltk_data_path, quiet=False)  
+            nltk.download('stopwords', download_dir=nltk_data_path, quiet=False)
+            nltk.download('averaged_perceptron_tagger', download_dir=nltk_data_path, quiet=False)
+            print('✓ All NLTK data downloaded successfully')
+        except Exception as e:
+            print(f'Error downloading NLTK data: {e}')
+            # Try alternative download method
+            import subprocess
+            subprocess.run(['python', '-m', 'nltk.downloader', '-d', nltk_data_path, 'punkt', 'stopwords', 'averaged_perceptron_tagger'])
+        
+        # Verify downloads
+        for corpus in ['punkt', 'stopwords', 'averaged_perceptron_tagger']:
+            try:
+                nltk.data.find(f'tokenizers/{corpus}')
+                print(f'✓ {corpus} verified')
+            except LookupError:
+                try:
+                    nltk.data.find(f'corpora/{corpus}')
+                    print(f'✓ {corpus} verified in corpora')
+                except LookupError:
+                    try:
+                        nltk.data.find(f'taggers/{corpus}')
+                        print(f'✓ {corpus} verified in taggers')
+                    except LookupError:
+                        print(f'✗ {corpus} not found')
         "
+        
+    - name: 'Create startup script'
+      run: |
+        cat > startup.sh << 'EOF'
+        #!/bin/bash
+        echo "Starting application..."
+        
+        # Set environment variables
+        export NLTK_DATA="/home/site/wwwroot/nltk_data"
+        export PYTHONPATH="/home/site/wwwroot:$PYTHONPATH"
+        
+        # Navigate to app directory
+        cd /home/site/wwwroot
+        
+        # Start gunicorn with proper configuration
+        gunicorn --bind=0.0.0.0:8000 --timeout 600 --workers 1 --worker-class sync --preload app:app
+        EOF
+        chmod +x startup.sh
+        
+    - name: 'Create web.config for Azure'
+      run: |
+        cat > web.config << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <configuration>
+          <system.webServer>
+            <handlers>
+              <add name="PythonHandler" path="*" verb="*" modules="httpPlatformHandler" resourceType="Unspecified"/>
+            </handlers>
+            <httpPlatform processPath="D:\home\site\wwwroot\startup.sh" 
+                          arguments="" 
+                          stdoutLogEnabled="true" 
+                          stdoutLogFile="D:\home\LogFiles\python.log" 
+                          startupTimeLimit="60" 
+                          requestTimeout="00:04:00">
+              <environmentVariables>
+                <environmentVariable name="PYTHONPATH" value="D:\home\site\wwwroot"/>
+                <environmentVariable name="NLTK_DATA" value="D:\home\site\wwwroot\nltk_data"/>
+                <environmentVariable name="PORT" value="8000"/>
+              </environmentVariables>
+            </httpPlatform>
+          </system.webServer>
+        </configuration>
+        EOF
+        
+    - name: 'Create requirements freeze'
+      run: |
+        source venv/bin/activate
+        pip freeze > deployed_requirements.txt
+        echo "Deployed requirements:"
+        cat deployed_requirements.txt
         
     - name: 'Verify files before deployment'
       run: |
         echo "Files in current directory:"
         ls -la
+        echo "NLTK data directory contents:"
+        ls -la nltk_data/ || echo "nltk_data directory not found"
         echo "Checking if required files exist:"
         [ -f "app.py" ] && echo "✓ app.py exists" || echo "✗ app.py missing"
         [ -f "requirements.txt" ] && echo "✓ requirements.txt exists" || echo "✗ requirements.txt missing"
+        [ -f "startup.sh" ] && echo "✓ startup.sh exists" || echo "✗ startup.sh missing"
+        [ -f "web.config" ] && echo "✓ web.config exists" || echo "✗ web.config missing"
         [ -d "nltk_data" ] && echo "✓ nltk_data directory exists" || echo "✗ nltk_data directory missing"
+        echo "Startup script content:"
+        cat startup.sh
         
     - name: 'Deploy to Azure Web App'
-      uses: azure/webapps-deploy@v3  # Updated to v3
+      uses: azure/webapps-deploy@v3
       with:
         app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
         publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        package: '.' 
+        package: '.'
