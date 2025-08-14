@@ -1,5 +1,6 @@
 import os
 import sys
+from flask_cors import CORS
 
 # Set NLTK data path for Azure deployment
 nltk_data_path = os.path.join(os.getcwd(), 'nltk_data')
@@ -21,6 +22,8 @@ import logging
 
 # Initialize Flask app
 app = Flask(__name__)
+
+CORS(app)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
