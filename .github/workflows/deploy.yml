@@ -2,7 +2,7 @@ name: Deploy Flask API to Azure (SCM)
 
 on:
   push:
-    branches: ["main"]
+    branches: ["master"]
 
 env:
   AZURE_WEBAPP_NAME: flask-tokenization-api  
